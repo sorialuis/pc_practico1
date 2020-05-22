@@ -317,6 +317,7 @@ int CrearSemaforos (Monitor_t *m) {
     perror("sem_open()");
     error -= 1;
   }
+
   return error;
 }
 

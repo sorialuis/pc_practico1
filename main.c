@@ -6,6 +6,10 @@
 #include <semaphore.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+#include <sys/wait.h>
+#include <sys/types.h>
+#include <sys/mman.h>
 #include "monitorBufferCircular.h"
 
 #define COCINEROS 3
@@ -53,9 +57,7 @@ int main() {
     int error;
 
     int cooks;
-    // int queued_clients;
-    int finished_orders;    
-    int opt;
+    int finished_orders;
 
     pthread_t *chefThreads = (pthread_t *)calloc(COCINEROS,sizeof(pthread_t));
 
@@ -77,6 +79,20 @@ int main() {
     params->mercadoChino->clients = (Client*)calloc(CLIENTES,sizeof(Client));
 
     params->mercadoChino->mtx = (pthread_mutex_t *) calloc(1,sizeof(pthread_mutex_t));
+    params->mercadoChino->split = (SplitSemaphore_t *)calloc(1,sizeof(SplitSemaphore_t));
+    params->mercadoChino->split->pagar = sem_open("/splitpagar", O_CREAT, O_RDWR, 0);
+    if(params->mercadoChino->split->pagar == SEM_FAILED) {
+        perror("/splitpagar");
+        error = -1;
+        return error;
+    }
+
+    params->mercadoChino->split->cobrar = sem_open("/splitcobrar", O_CREAT, O_RDWR, 0);
+    if(params->mercadoChino->split->cobrar == SEM_FAILED) {
+        perror("/splitcobrar");
+        error = -1;
+        return error;
+    }
 
     params->mercadoChino->m = CrearMonitor();
 
@@ -92,6 +108,28 @@ int main() {
         return error;
     }
 
+    //memoria compartida 
+    int memoria=0;
+    memoria = shm_open("/memCompartida", O_CREAT | O_RDWR, 0660);
+    if (memoria < 0) {
+      perror("shm_open()");
+      error = -1;
+    }
+    if (!error) {
+        printf("Descriptor de memoria creado!\n");
+        error = ftruncate(memoria, sizeof(int));
+        if (error)
+        perror("ftruncate()");
+    }
+    params->mercadoChino->memoria = (int *) calloc(1,sizeof(int));
+    params->mercadoChino->memoria = &memoria;
+    //Dentro del hilo solo le paso memoria 
+    // int *datos=NULL;
+    // datos = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, mem, 0);
+
+
+
+
     for(int i = 0; i < COCINEROS; i++){
         params->mercadoChino->chefs[i].id = i;
         params->mercadoChino->chefs[i].libre = (int *)calloc(1,sizeof(int));
@@ -104,13 +142,13 @@ int main() {
 
     pthread_create(&menu,NULL,showMenu,(void *)params);
 
-    
+        
+    int opt;
 
     while (!finished){
 
         scanf("%d",&opt);
         /*El switch es feo... lo cambiamos ?*/
-
         switch (opt) {
             case 1:
                 startGame(params->mercadoChino,params->sThread);
@@ -138,19 +176,16 @@ int main() {
 void *showMenu(void *args){
     MenuParameters *params;
     int i;
-    // char *status[2];
     char *status;
 
+    int *datos=NULL;
+    datos = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED,*params->mercadoChino->memoria, 0);
 
 
     params = (MenuParameters *)args;
 
-    // status[0] = "Ocupado";
-    // status[1] = "Desocupado";
-
     while (!finished){
         clearScreen();
-        // printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
         printf("Puerta: %s\n\n", placeOpen ? "ABIERTA" : "CERRADA");
 
         printf("Estados de Cocineros:\n");
@@ -158,12 +193,10 @@ void *showMenu(void *args){
             if(*params->mercadoChino->chefs[i].libre){
                 status = "Desocupado";
             }else status = "Ocupado";
-            // printf("\tCocinero %d: %s\n",i,status[rand()%2]);
             printf("\tCocinero %d: %s\n",i+1,status);
         }
 
         printf("\nClientes en cola:\n");
-        // for(i = 1; i <= *params->queued_clients; i++ ){
         for(i = 0; i < params->mercadoChino->clientsTotal; i++ ){
             if(*params->mercadoChino->clients[i].tolerance){
                 printf("\tCliente %d pedido %s.\n",params->mercadoChino->clients[i].id, params->mercadoChino->clients[i].order->name);
@@ -172,6 +205,7 @@ void *showMenu(void *args){
         printf("\nPedidos Terminados: %d\n",
             *params->mercadoChino->m->lista_terminados->cant);
 
+        printf("\nGanancias: $%d\n",*datos);
         printf("\nAcciones:\n");
         printf("\t1 - Iniciar Juego\n");
         printf("\t2 - Atender Cliente\n");
@@ -198,7 +232,7 @@ void startGame(FoodPlace *mercadoChino, pthread_t sThread){
 
     /* Setear alarma de fin */
     signal(SIGALRM, closeDoor);
-    alarm(300);
+    alarm(60);
 
 }
 
@@ -207,20 +241,29 @@ void serveClient(FoodPlace *mercadoChino){
     /*Checkear si el juego esta iniciado.*/
     /*Checkear si hay clientes en la cola.*/
     /*Checkear si hay cocineros disponibles. */
+    
+    for(int i = 0; i < mercadoChino->clientsTotal; i++ ){
+        if(*mercadoChino->clients[i].tolerance){
+            sem_post(mercadoChino->semQueue);
+            i = mercadoChino->clientsTotal;    
+        }
+    }
 
-    sem_post(mercadoChino->semQueue);
+    
 
     /*Asignar un cliente de la cola a un cocinero. */
-
-    printf("\nCliente Atendido\n");
-
+    return ;
 }
 
 void deliverOrder(FoodPlace *mercadoChino){
-    /*Checkear si el juego esta iniciado.*/
-    /*Checkear si hay ordenes completadas.*/
-
-    printf("\nOrden Entregada\n");
+    /*Checkear si el juego esta iniciado.*/ 
+    /*Checkear si hay ordenes completadas.*/ 
+    if(*mercadoChino->m->lista_terminados->cant){
+        sem_post(mercadoChino->split->pagar); 
+        printf("Cobrando....\n");
+        sem_wait(mercadoChino->split->cobrar);
+    }
+    return ;
 
 }
 
@@ -250,10 +293,11 @@ void *streetThread(void *arg){
         client->mtx = mercadoChino->mtx;
         client->semQueue = mercadoChino->semQueue;
         client->m = mercadoChino->m;
+        client->memoria = mercadoChino->memoria;
 
         mercadoChino->clients[client->id] = *client;
 
-        sleep(rand()%10+1);
+        sleep(rand()%5+1);
         pthread_create(cThread,NULL,clientThread,(void*)client);
         mercadoChino->clientsTotal = aux;
     }
@@ -270,6 +314,9 @@ void closeDoor(int sigCode){
 void *clientThread(void *arg){
     Client *client = (Client *)arg;
 
+    int *datos=NULL;
+    datos = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, *client->memoria, 0);
+
     printf("Nuevo cliente en cola");
     fflush(NULL);
 
@@ -284,8 +331,11 @@ void *clientThread(void *arg){
         IngresarPedido(client->m, *client->order);
         pthread_mutex_lock(client->mtx);
         SacarComida(client->m, client->order);
-        //Pagar con memoria compartida sincronizado con split semaphore
-        // *chef->m->lista_terminados->cant = *chef->m->lista_terminados->cant - 1;
+        sem_wait(client->split->pagar); 
+        //Guardando en memoria compartida
+        *datos = *datos + client->order->value;
+        sem_post(client->split->cobrar); 
+        *client->m->lista_terminados->cant = *client->m->lista_terminados->cant - 1;
     } else{
         printf("El Cliente %d se canso de esperar\r\n",client->id);
         *client->tolerance = 0;
@@ -297,7 +347,6 @@ void *clientThread(void *arg){
 }
 
 void *chefThread(void *arg){
-    // int error;
     Chef *chef = (Chef *)arg;
     Food comida;
  
@@ -311,7 +360,7 @@ void *chefThread(void *arg){
         pthread_mutex_unlock(chef->mtx);
         *chef->libre = 1;
     }
-    // free(chef);
+    free(chef);
     pthread_exit(NULL);
     
 }
@@ -321,33 +370,44 @@ Food *menuSetup(){
 
     sprintf(menu[0].name,"Pizza");
     menu[0].prepTime = 2;
+    menu[0].value = 100;
 
     sprintf(menu[1].name,"Lomito");
     menu[1].prepTime = 2;
+    menu[1].value = 300;
+
 
     sprintf(menu[2].name,"Empanadas");
     menu[2].prepTime = 5;
+    menu[2].value = 150;
 
     sprintf(menu[3].name,"Ensalada");
     menu[3].prepTime = 4;
+    menu[3].value = 100;
 
     sprintf(menu[4].name,"Milanesa");
     menu[4].prepTime = 3;
+    menu[4].value = 150;
 
     sprintf(menu[5].name,"Sushi");
     menu[5].prepTime = 6;
+    menu[5].value = 200;
 
     sprintf(menu[6].name,"Chop Suey");
     menu[6].prepTime = 3;
+    menu[6].value = 200;
 
     sprintf(menu[7].name,"Pollo");
     menu[7].prepTime = 4;
+    menu[7].value = 150;
 
     sprintf(menu[8].name,"Matambre");
     menu[8].prepTime = 3;
+    menu[8].value = 350;
 
     sprintf(menu[9].name,"Choripan");
     menu[9].prepTime = 2;
+    menu[9].value = 100;
 
     return menu;
 }

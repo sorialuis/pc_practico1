@@ -83,6 +83,22 @@ int main (int argc, char *argv[]) {
       printf("/semQueue borrado!\n");
     }
 
+    error = sem_unlink("/splitpagar");
+    if (error) {
+      perror("/splitpagar");
+    }
+    else {
+      printf("/splitpagar borrado!\n");
+    }
+
+    error = sem_unlink("/splitcobrar");
+    if (error) {
+      perror("/splitcobrar");
+    }
+    else {
+      printf("/splitcobrar borrado!\n");
+    }
+
 
     
 

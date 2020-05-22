@@ -6,6 +6,7 @@
 typedef struct {
     char name[50];
     int prepTime;
+    int value;
 }Food;
 
 typedef struct {
@@ -21,12 +22,19 @@ typedef struct{
 }Monitor_t;
 
 typedef struct {
+    sem_t *pagar;
+    sem_t *cobrar;
+}SplitSemaphore_t;
+
+typedef struct {
     int id;
     int *tolerance;
     Food *order;
     sem_t *semQueue;
     pthread_mutex_t *mtx;
     Monitor_t *m;
+    SplitSemaphore_t *split;
+    int *memoria;
 }Client;
 
 // typedef struct {
@@ -46,6 +54,7 @@ typedef struct {
     pthread_mutex_t *mtx; 
 }Chef;
 
+
 typedef struct {
     Food *menu;
     Client *clients;
@@ -56,6 +65,8 @@ typedef struct {
     Monitor_t *m;
     Chef *chefs;
     int clientsTotal;
+    SplitSemaphore_t *split;
+    int *memoria;
 }FoodPlace;
 
 
