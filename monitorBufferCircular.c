@@ -9,30 +9,32 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "MonitoresSimple.h"
+#include "monitorBufferCircular.h"
 
-struct Monitor_t* CrearMonitor  () {
+
+Monitor_t* CrearMonitor  () {
   int error=0;
-  struct Monitor_t *aux=NULL;
+  Monitor_t *aux=NULL;
 
-  struct boundedBuffer_t boundedBuffer;
 
-  aux = (struct Monitor_t*)(calloc(1, sizeof(struct Monitor_t)));  
-
+  aux = (Monitor_t*)(calloc(1, sizeof(Monitor_t)));  
+  aux->lista_pedidos = (boundedBuffer_t*)(calloc(1,sizeof(boundedBuffer_t)));
+  aux->lista_terminados = (boundedBuffer_t*)(calloc(1,sizeof(boundedBuffer_t)));
   if (aux != NULL) {
-    aux->ready=0;
+  
+    aux->lista_pedidos->inicio = 0;
+    aux->lista_pedidos->fin    = 0;
+    aux->lista_terminados->inicio = 0;
+    aux->lista_terminados->fin    = 0;
 
-    boundedBuffer.inicio = 0;
-    boundedBuffer.fin    = 0;
-
-    error += CrearSemaforos(&aux);
+    error += CrearSemaforos(aux);
     if (error)
       perror("CrearSemaforos()"); 
   }
   return aux;
 }
 
-int Ingresar(struct boundedBuffer_t *bb, Food dato){
+int Ingresar(boundedBuffer_t *bb, Food dato){
     int error = 0;
     error = sem_wait(bb->vacio);
     if (!error) {
@@ -40,7 +42,7 @@ int Ingresar(struct boundedBuffer_t *bb, Food dato){
     }
     if (!error) {      
         bb->buf[bb->fin] = dato;
-        bb->fin = ++bb->fin % ELEMENTOS;
+        bb->fin = (bb->fin + 1) % ELEMENTOS;
         error = sem_post(bb->escribiendo);
     }
     if (!error) {
@@ -54,7 +56,7 @@ int Ingresar(struct boundedBuffer_t *bb, Food dato){
     return 0;
 }
 
-int Sacar(struct boundedBuffer_t *bb, Food *dato){
+int Sacar(boundedBuffer_t *bb, Food *dato){
     int error=0;
 
     error = sem_wait(bb->lleno);
@@ -62,8 +64,8 @@ int Sacar(struct boundedBuffer_t *bb, Food *dato){
         error = sem_wait(bb->leyendo);
     }
     if (!error){
-        dato = bb->buf[bb->inicio];
-        bb->inicio = ++bb->inicio % ELEMENTOS;
+        *dato = bb->buf[bb->inicio];
+        bb->inicio = (bb->inicio + 1) % ELEMENTOS;
         error = sem_post(bb->leyendo);
     }else {
         perror("sem_wait()");
@@ -80,23 +82,32 @@ int Sacar(struct boundedBuffer_t *bb, Food *dato){
     return 0;
 }
 
-int IngresarPedido (struct Monitor_t *m, Food dato) {
-    return Ingresar(m->lista_pedidos,dato);
+int IngresarPedido (Monitor_t *m, Food dato) {
+
+    int error = Ingresar(m->lista_pedidos,dato);
+    return error;
+
+
+      
+    
 }
 
-int SacarPedido (struct Monitor_t *m, Food *dato) {
-    return Sacar(m->lista_pedidos,dato);
+int SacarPedido (Monitor_t *m, Food *dato) {
+    int error = Sacar(m->lista_pedidos,dato); 
+    return error;
 }
 
-int IngresarComida(struct Monitor_t *m, Food dato){
-    return Ingresar(m->lista_terminados,dato);
+int IngresarComida(Monitor_t *m, Food dato){  
+    int error = Ingresar(m->lista_terminados,dato);
+    return error;
 }
 
-int SacarComida(struct Monitor_t *m, Food *dato){
-    return Sacar(m->lista_terminados,dato);
+int SacarComida(Monitor_t *m, Food *dato){ 
+    int error = Sacar(m->lista_terminados,dato);
+    return error;
 }
 
-void BorrarMonitor (struct Monitor_t *m) {
+void BorrarMonitor (Monitor_t *m) {
   if (m != NULL) {
     int error=0, status=0;
 
@@ -212,15 +223,31 @@ void BorrarMonitor (struct Monitor_t *m) {
       perror("sem_close()");
       error -= 1;
     }
+
+    error = sem_unlink("/semQueue");
+    if (error) {
+      perror("/semQueue");
+      error -= 1;
+    }
+    else {
+      printf("/semQueue borrado!\n");
+    }
+
+
+
     free(m);
   }
 }
 
-int CrearSemaforos (struct Monitor_t *m) {
+int CrearSemaforos (Monitor_t *m) {
   int error=0;
 
+  m->lista_pedidos->cant = (int*)calloc(1,sizeof(int));
+  *m->lista_pedidos->cant = 0;
+  m->lista_terminados->cant = (int*)calloc(1,sizeof(int));
+  *m->lista_terminados->cant = 0;
   m->lista_pedidos->lleno = sem_open("/listapedidos_lleno", O_CREAT, 0640, 0);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_pedidos->lleno != SEM_FAILED) {
     printf("Semaforo [listapedidos_lleno] creado!\n");
   }
   else {
@@ -229,7 +256,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_pedidos->vacio = sem_open("/listapedidos_vacio", O_CREAT, 0640, ELEMENTOS);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_pedidos->vacio != SEM_FAILED) {
     printf("Semaforo [listapedidos_vacio] creado!\n");
   }
   else {
@@ -238,7 +265,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_pedidos->leyendo = sem_open("listapedidos_leyendo", O_CREAT, 0640, 1);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_pedidos->leyendo != SEM_FAILED) {
     printf("Semaforo [leyendo] creado!\n");
   }
   else {
@@ -247,7 +274,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_pedidos->escribiendo = sem_open("/listapedidos_escribiendo", O_CREAT, 0640, 1);
-  if (bb->lleno != SEM_FAILED) {
+  if ( m->lista_pedidos->escribiendo != SEM_FAILED) {
     printf("Semaforo [escribiendo] creado!\n");
   }
   else {
@@ -256,7 +283,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_terminados->lleno = sem_open("/listaterminados_lleno", O_CREAT, 0640, 0);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_terminados->lleno != SEM_FAILED) {
     printf("Semaforo [listapedidos_lleno] creado!\n");
   }
   else {
@@ -265,7 +292,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_terminados->vacio = sem_open("/listaterminados_vacio", O_CREAT, 0640, ELEMENTOS);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_terminados->vacio != SEM_FAILED) {
     printf("Semaforo [listapedidos_vacio] creado!\n");
   }
   else {
@@ -274,7 +301,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_terminados->leyendo = sem_open("/listaterminados_leyendo", O_CREAT, 0640, 1);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_terminados->leyendo != SEM_FAILED) {
     printf("Semaforo [leyendo] creado!\n");
   }
   else {
@@ -283,7 +310,7 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
 
   m->lista_terminados->escribiendo = sem_open("/listaterminados_escribiendo", O_CREAT, 0640, 1);
-  if (bb->lleno != SEM_FAILED) {
+  if (m->lista_terminados->escribiendo != SEM_FAILED) {
     printf("Semaforo [escribiendo] creado!\n");
   }
   else {
@@ -292,5 +319,6 @@ int CrearSemaforos (struct Monitor_t *m) {
   }
   return error;
 }
+
 
 

@@ -9,8 +9,9 @@
 #include "monitorBufferCircular.h"
 
 #define COCINEROS 3
+#define CLIENTES 50
 
-/* Variable global para la alarma */
+/* Variables globales para la alarma */
 int placeOpen, finished;
 
 
@@ -34,9 +35,9 @@ void clearScreen();
 
 /* UserMenu Options */
 void startGame(FoodPlace *, pthread_t);
-void serveClient();
-void deliverOrder();
-void closeFoodPlace();
+void serveClient(FoodPlace *);
+void deliverOrder(FoodPlace *);
+void closeFoodPlace(Monitor_t *m);
 
 /* FoodMenu Functions */
 Food *menuSetup();
@@ -52,25 +53,33 @@ int main() {
     int error;
 
     int cooks;
-    int queued_clients;
+    // int queued_clients;
     int finished_orders;    
     int opt;
 
+    
 
     srand(time(NULL));
 
     cooks = 3;
-    queued_clients = 5;
+    // queued_clients = 5;
     placeOpen = 1;
     finished = 0;
     finished_orders = 3;
 
-
     MenuParameters *params = (MenuParameters*)calloc(1,sizeof(MenuParameters));
+    
     params->mercadoChino = (FoodPlace *)calloc(1,sizeof(FoodPlace));
     params->mercadoChino->menu = menuSetup();
     params->cooks = &cooks;
-    params->queued_clients = &queued_clients;
+    // params->queued_clients = &queued_clients; 
+    params->mercadoChino->chefs = (Chef*)calloc(COCINEROS,sizeof(Chef));  
+    params->mercadoChino->clients = (Client*)calloc(CLIENTES,sizeof(Client));
+
+    params->mercadoChino->mtx = (pthread_mutex_t *) calloc(1,sizeof(pthread_mutex_t));
+
+    params->mercadoChino->m = CrearMonitor();
+
     params->finished_orders = &finished_orders;
     pthread_mutex_init(params->mercadoChino->mtx,NULL);
     pthread_mutex_lock(params->mercadoChino->mtx);
@@ -83,7 +92,19 @@ int main() {
         return error;
     }
 
+    for(int i = 0; i < COCINEROS; i++){
+        params->mercadoChino->chefs[i].id = i;
+        params->mercadoChino->chefs[i].libre = (int *)calloc(1,sizeof(int));
+        *params->mercadoChino->chefs[i].libre = 1;
+        params->mercadoChino->chefs[i].m = params->mercadoChino->m;
+        params->mercadoChino->chefs[i].mtx = params->mercadoChino->mtx;
+
+        pthread_create(&chefThreads[i],NULL,chefThread,&params->mercadoChino->chefs[i]); 
+    }
+
     pthread_create(&menu,NULL,showMenu,(void *)params);
+
+    
 
     while (!finished){
 
@@ -94,23 +115,18 @@ int main() {
             case 1:
                 startGame(params->mercadoChino,params->sThread);
                 break;
-
             case 2:
-                serveClient();
+                serveClient(params->mercadoChino);
                 break;
-
             case 3:
-                deliverOrder();
+                deliverOrder(params->mercadoChino);
                 break;
-
             case 4:
-                closeFoodPlace();
+                closeFoodPlace(params->mercadoChino->m);
                 break;
-
             default:
-                printf("OPCION INCORRECTA, NO SEAS MANCO");
+                printf("OPCION INCORRECTA");
         }
-
         fflush(stdin);
     }
 
@@ -122,29 +138,39 @@ int main() {
 void *showMenu(void *args){
     MenuParameters *params;
     int i;
-    char *status[2];
+    // char *status[2];
+    char *status;
+
+
 
     params = (MenuParameters *)args;
 
-    status[0] = "Ocupado";
-    status[1] = "Desocupado";
+    // status[0] = "Ocupado";
+    // status[1] = "Desocupado";
 
     while (!finished){
         clearScreen();
-
+        // printf("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n");
         printf("Puerta: %s\n\n", placeOpen ? "ABIERTA" : "CERRADA");
 
         printf("Estados de Cocineros:\n");
-        for(i = 1; i <= *params->cooks; i++ ){
-            printf("\tCocinero %d: %s\n",i,status[rand()%2]);
+        for(i = 0; i < COCINEROS; i++ ){
+            if(*params->mercadoChino->chefs[i].libre){
+                status = "Desocupado";
+            }else status = "Ocupado";
+            // printf("\tCocinero %d: %s\n",i,status[rand()%2]);
+            printf("\tCocinero %d: %s\n",i+1,status);
         }
 
         printf("\nClientes en cola:\n");
-        for(i = 1; i <= *params->queued_clients; i++ ){
-            printf("\tCliente %d pedido %s se va en %d segundos\n",i,"%food_name%",10);
+        // for(i = 1; i <= *params->queued_clients; i++ ){
+        for(i = 0; i < params->mercadoChino->clientsTotal; i++ ){
+            if(*params->mercadoChino->clients[i].tolerance){
+                printf("\tCliente %d pedido %s.\n",params->mercadoChino->clients[i].id, params->mercadoChino->clients[i].order->name);
+            }
         }
-
-        printf("\nPedidos Terminados: %d\n",*params->finished_orders);
+        printf("\nPedidos Terminados: %d\n",
+            *params->mercadoChino->m->lista_terminados->cant);
 
         printf("\nAcciones:\n");
         printf("\t1 - Iniciar Juego\n");
@@ -172,15 +198,17 @@ void startGame(FoodPlace *mercadoChino, pthread_t sThread){
 
     /* Setear alarma de fin */
     signal(SIGALRM, closeDoor);
-    alarm(10);
+    alarm(300);
 
 }
 
-void serveClient(){
+void serveClient(FoodPlace *mercadoChino){
 
     /*Checkear si el juego esta iniciado.*/
     /*Checkear si hay clientes en la cola.*/
     /*Checkear si hay cocineros disponibles. */
+
+    sem_post(mercadoChino->semQueue);
 
     /*Asignar un cliente de la cola a un cocinero. */
 
@@ -188,7 +216,7 @@ void serveClient(){
 
 }
 
-void deliverOrder(){
+void deliverOrder(FoodPlace *mercadoChino){
     /*Checkear si el juego esta iniciado.*/
     /*Checkear si hay ordenes completadas.*/
 
@@ -196,11 +224,11 @@ void deliverOrder(){
 
 }
 
-void closeFoodPlace(){
-    /*Cerrar todos los procesos pa irse a las casa a jugar wowcito y matar a mente colmena.*/
+void closeFoodPlace(Monitor_t *m){
     printf("\nCerrando Local\n");
     placeOpen = 0;
     finished = 1;
+    BorrarMonitor(m);
 }
 
 void *streetThread(void *arg){
@@ -211,18 +239,23 @@ void *streetThread(void *arg){
 
     int aux = 0;
 
-    while(placeOpen){
+    while(placeOpen && aux < CLIENTES){
         pthread_t *cThread = (pthread_t *) calloc(1,sizeof(pthread_t));
 
         Client *client = (Client*)calloc(1,sizeof(Client));
         client->id = aux++;
-        client->tolerance = tolerance;
+        client->tolerance = (int*)calloc(1,sizeof(int));
+        *client->tolerance = tolerance;
         client->order = pickFood(mercadoChino->menu);
         client->mtx = mercadoChino->mtx;
         client->semQueue = mercadoChino->semQueue;
+        client->m = mercadoChino->m;
+
+        mercadoChino->clients[client->id] = *client;
 
         sleep(rand()%10+1);
         pthread_create(cThread,NULL,clientThread,(void*)client);
+        mercadoChino->clientsTotal = aux;
     }
 
     printf("Cerrando hilo calle");
@@ -242,39 +275,45 @@ void *clientThread(void *arg){
 
     struct timespec wait;
     clock_gettime(CLOCK_REALTIME, &wait);
-    wait.tv_sec += client->tolerance;
+    wait.tv_sec += *client->tolerance;
 
     int errCode = sem_timedwait(client->semQueue, &wait);
 
     if(!errCode){
-        //IngresarPedido(client->m->lista_pedidos, client->order);
+        *client->tolerance = 0;
+        IngresarPedido(client->m, *client->order);
         pthread_mutex_lock(client->mtx);
-        //SacarComida(cliente->m->lista_terminados, *client->order);
+        SacarComida(client->m, client->order);
         //Pagar con memoria compartida sincronizado con split semaphore
+        // *chef->m->lista_terminados->cant = *chef->m->lista_terminados->cant - 1;
     } else{
         printf("El Cliente %d se canso de esperar\r\n",client->id);
+        *client->tolerance = 0;
     }
 
     free(client);
     pthread_exit(NULL);
+
 }
 
 void *chefThread(void *arg){
-    //int error;
+    // int error;
     Chef *chef = (Chef *)arg;
-    //Food comida;
-
+    Food comida;
+ 
     while(!finished){
         //semaforo
-        //error= SacarPedido(chef->m,&comida);
-        chef->libre = 0;
-        //sleep(comida.prepTime);
-        //error = IngresarComida(chef->m,*comida);
+        SacarPedido(chef->m,&comida);
+        *chef->libre = 0;
+        sleep(comida.prepTime);
+        IngresarComida(chef->m,comida);
+        *chef->m->lista_terminados->cant = *chef->m->lista_terminados->cant + 1;
         pthread_mutex_unlock(chef->mtx);
         *chef->libre = 1;
     }
     // free(chef);
     pthread_exit(NULL);
+    
 }
 
 Food *menuSetup(){

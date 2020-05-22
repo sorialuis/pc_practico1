@@ -7,7 +7,7 @@
 
 int main (int argc, char *argv[]) {
     int error=0;
-    char str[50];
+  
 
     error = sem_unlink("/listapedidos_lleno");
     if (error) {
@@ -74,5 +74,20 @@ int main (int argc, char *argv[]) {
     else {
       printf("/listaterminados_escribiendo borrado!\n");
     }
+
+    error = sem_unlink("/semQueue");
+    if (error) {
+      perror("/semQueue");
+    }
+    else {
+      printf("/semQueue borrado!\n");
+    }
+
+
+    
+
+
+
+
   return error;
 }
