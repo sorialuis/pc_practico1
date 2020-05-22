@@ -57,7 +57,7 @@ int main() {
     int finished_orders;    
     int opt;
 
-    
+    pthread_t *chefThreads = (pthread_t *)calloc(COCINEROS,sizeof(pthread_t));
 
     srand(time(NULL));
 
