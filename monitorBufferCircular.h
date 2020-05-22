@@ -15,8 +15,8 @@ struct Monitor_t{
 struct boundedBuffer_t{
   int inicio, fin;
   Food buf[ELEMENTOS];
-  sem_t *ocupado, *desocupado, *pidiendo, *cocinando;
-//     sem_t *lleno, *vacio, *leyendo, *escribiendo;
+//   sem_t *ocupado, *desocupado, *pidiendo, *cocinando;
+    sem_t *lleno, *vacio, *leyendo, *escribiendo;
 };
 
 struct Monitor_t* CrearMonitor  ();

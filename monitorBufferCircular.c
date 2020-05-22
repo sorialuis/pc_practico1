@@ -5,6 +5,9 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include <semaphore.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "MonitoresSimple.h"
 
@@ -14,8 +17,7 @@ struct Monitor_t* CrearMonitor  () {
 
   struct boundedBuffer_t boundedBuffer;
 
-  aux = (struct Monitor_t*)(calloc(1, sizeof(struct Monitor_t)));
-  
+  aux = (struct Monitor_t*)(calloc(1, sizeof(struct Monitor_t)));  
 
   if (aux != NULL) {
     aux->ready=0;
@@ -23,18 +25,10 @@ struct Monitor_t* CrearMonitor  () {
     boundedBuffer.inicio = 0;
     boundedBuffer.fin    = 0;
 
-    error += pthread_cond_init(&aux->cond, NULL);
+    error += CrearSemaforos(&aux);
     if (error)
-      perror("pthread_cond_init()");
-
-    error += CrearSemaforos(&aux->buffer);
-    if (error)
-      perror("CrearSemaforos()");
-
-    pthread_cond_broadcast(&aux->cond);
-    // pthread_mutex_unlock(&aux->mutex);
+      perror("CrearSemaforos()"); 
   }
-
   return aux;
 }
 
@@ -61,8 +55,7 @@ int Ingresar(struct boundedBuffer_t *bb, Food dato){
 }
 
 int Sacar(struct boundedBuffer_t *bb, Food *dato){
-    int error=0, terminar=COCINEROS;
-    Food leidos = NULL;
+    int error=0;
 
     error = sem_wait(bb->lleno);
     if (!error) {
@@ -96,7 +89,7 @@ int SacarPedido (struct Monitor_t *m, Food *dato) {
 }
 
 int IngresarComida(struct Monitor_t *m, Food dato){
-    return Sacar(m->lista_terminados,dato);
+    return Ingresar(m->lista_terminados,dato);
 }
 
 int SacarComida(struct Monitor_t *m, Food *dato){
@@ -105,51 +98,198 @@ int SacarComida(struct Monitor_t *m, Food *dato){
 
 void BorrarMonitor (struct Monitor_t *m) {
   if (m != NULL) {
-    pthread_cond_destroy(&m->cond);
-    pthread_mutex_destroy(&m->mutex);
+    int error=0, status=0;
+
+    status = sem_close(m->lista_pedidos->lleno);
+    if (!status) {
+      status = sem_unlink("/listapedidos_lleno");
+      if (!status)printf("Semaforo [listapedidos_lleno] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_pedidos->vacio);
+    if (!status) {
+      status = sem_unlink("/listapedidos_vacio");
+      if (!status)printf("Semaforo [listapedidos_vacio] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_pedidos->leyendo);
+    if (!status) {
+      status = sem_unlink("/listapedidos_leyendo");
+      if (!status)printf("Semaforo [listapedidos_leyendo] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_pedidos->escribiendo);
+    if (!status) {
+      status = sem_unlink("/listapedidos_escribiendo");
+      if (!status)printf("Semaforo [listapedidos_escribiendo] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+
+  status = sem_close(m->lista_terminados->lleno);
+    if (!status) {
+      status = sem_unlink("/listaterminados_lleno");
+      if (!status)printf("Semaforo [listaterminados_lleno] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_terminados->vacio);
+    if (!status) {
+      status = sem_unlink("/listaterminados_vacio");
+      if (!status)printf("Semaforo [listaterminados_vacio] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_terminados->leyendo);
+    if (!status) {
+      status = sem_unlink("/listaterminados_leyendo");
+      if (!status)printf("Semaforo [listaterminados_leyendo] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
+
+    status = sem_close(m->lista_terminados->escribiendo);
+    if (!status) {
+      status = sem_unlink("/listaterminados_escribiendo");
+      if (!status)printf("Semaforo [listaterminados_escribiendo] borrado!\n");
+      else {
+        perror("sem_unlink()");
+        error -= 1;
+      }
+    }
+    else {
+      perror("sem_close()");
+      error -= 1;
+    }
     free(m);
   }
 }
 
-int CrearSemaforos (struct boundedBuffer_t *bb) {
+int CrearSemaforos (struct Monitor_t *m) {
   int error=0;
 
-  bb->ocupado = sem_open("/ocupado", O_CREAT, 0640, 0);
-  if (bb->ocupado != SEM_FAILED) {
-    printf("Semaforo [ocupado] creado!\n");
+  m->lista_pedidos->lleno = sem_open("/listapedidos_lleno", O_CREAT, 0640, 0);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [listapedidos_lleno] creado!\n");
   }
   else {
     perror("sem_open()");
     error -= 1;
   }
 
-  bb->desocupado = sem_open("/desocupado", O_CREAT, 0640, COCINEROS);
-  if (bb->ocupado != SEM_FAILED) {
-    printf("Semaforo [desocupado] creado!\n");
+  m->lista_pedidos->vacio = sem_open("/listapedidos_vacio", O_CREAT, 0640, ELEMENTOS);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [listapedidos_vacio] creado!\n");
   }
   else {
     perror("sem_open()");
     error -= 1;
   }
 
-  bb->pidiendo = sem_open("/pidiendo", O_CREAT, 0640, 1);
-  if (bb->ocupado != SEM_FAILED) {
-    printf("Semaforo [pidiendo] creado!\n");
+  m->lista_pedidos->leyendo = sem_open("listapedidos_leyendo", O_CREAT, 0640, 1);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [leyendo] creado!\n");
   }
   else {
     perror("sem_open()");
     error -= 1;
   }
 
-  bb->cocinando = sem_open("/cocinando", O_CREAT, 0640, 1);
-  if (bb->ocupado != SEM_FAILED) {
-    printf("Semaforo [cocinando] creado!\n");
+  m->lista_pedidos->escribiendo = sem_open("/listapedidos_escribiendo", O_CREAT, 0640, 1);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [escribiendo] creado!\n");
   }
   else {
     perror("sem_open()");
     error -= 1;
   }
 
+  m->lista_terminados->lleno = sem_open("/listaterminados_lleno", O_CREAT, 0640, 0);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [listapedidos_lleno] creado!\n");
+  }
+  else {
+    perror("sem_open()");
+    error -= 1;
+  }
+
+  m->lista_terminados->vacio = sem_open("/listaterminados_vacio", O_CREAT, 0640, ELEMENTOS);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [listapedidos_vacio] creado!\n");
+  }
+  else {
+    perror("sem_open()");
+    error -= 1;
+  }
+
+  m->lista_terminados->leyendo = sem_open("/listaterminados_leyendo", O_CREAT, 0640, 1);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [leyendo] creado!\n");
+  }
+  else {
+    perror("sem_open()");
+    error -= 1;
+  }
+
+  m->lista_terminados->escribiendo = sem_open("/listaterminados_escribiendo", O_CREAT, 0640, 1);
+  if (bb->lleno != SEM_FAILED) {
+    printf("Semaforo [escribiendo] creado!\n");
+  }
+  else {
+    perror("sem_open()");
+    error -= 1;
+  }
   return error;
 }
 
