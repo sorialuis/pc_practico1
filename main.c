@@ -2,19 +2,10 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <signal.h>
 
-/* Thread functions */
-void *streetThread(void *);
-
-/* UserMenu Functions */
-void *showMenu(void *);
-void clearScreen();
-
-/* UserMenu Options */
-void startGame();
-void serveClient();
-void deliverOrder();
-void closeFoodPlace(int *open);
+/* Variable global para la alarma */
+int open, finished;
 
 typedef struct {
     char name[50];
@@ -28,7 +19,13 @@ typedef struct {
 }Cashier;
 
 typedef struct {
-    int *open;
+    int id;
+    int tolerance;
+    Food *order;
+    pthread_mutex_t *mtxQueue;
+}Client;
+
+typedef struct {
     Food *menu;
     Food *currentOrder;
     Cashier cashier;
@@ -40,13 +37,32 @@ typedef struct {
     int *cooks; /*Cambiar por struct de cocineros*/
     int *queued_clients; /*Cambiar por struct de clientes con timeout y lo que pidieron*/
     int *finished_orders;
-    int *open;
+
+    FoodPlace *mercadoChino;
+    pthread_t sThread;
 }MenuParameters;
+
+/* Thread functions */
+void *streetThread(void *);
+void *clientThread(void *);
+
+/* UserMenu Functions */
+void *showMenu(void *);
+void clearScreen();
+
+/* UserMenu Options */
+void startGame(FoodPlace *, pthread_t);
+void serveClient();
+void deliverOrder();
+void closeFoodPlace();
 
 /* FoodMenu Functions */
 Food *menuSetup();
 Food *pickFood(Food * menu);
 int getMaxWaitTime(Food *menu);
+
+/* Alarm */
+void closeDoor(int);
 
 
 int main() {
@@ -54,41 +70,38 @@ int main() {
 
     int cooks;
     int queued_clients;
-    int open;
-    int finished_orders;
-    MenuParameters *params;
+    int finished_orders;    
     int opt;
 
-    FoodPlace *mercadoChino = (FoodPlace *)calloc(1,sizeof(FoodPlace));
+    MenuParameters *params = (MenuParameters*)calloc(1,sizeof(MenuParameters));
 
-
+    params->mercadoChino = (FoodPlace *)calloc(1,sizeof(FoodPlace));
 
     srand(time(NULL));
 
     cooks = 3;
     queued_clients = 5;
     open = 1;
+    finished = 0;
     finished_orders = 3;
 
-    mercadoChino->menu = menuSetup();
-    mercadoChino->open = &open;
+    params->mercadoChino->menu = menuSetup();
 
     params = calloc(1,sizeof(MenuParameters));
     params->cooks = &cooks;
     params->queued_clients = &queued_clients;
-    params->open = &open;
     params->finished_orders = &finished_orders;
 
     pthread_create(&menu,NULL,showMenu,(void *)params);
 
-    while (open){
+    while (!finished){
 
         scanf("%d",&opt);
         /*El switch es feo... lo cambiamos ?*/
 
         switch (opt) {
             case 1:
-                startGame();
+                startGame(params->mercadoChino,params->sThread);
                 break;
 
             case 2:
@@ -100,7 +113,7 @@ int main() {
                 break;
 
             case 4:
-                closeFoodPlace(&open);
+                closeFoodPlace();
                 break;
 
             default:
@@ -125,7 +138,7 @@ void *showMenu(void *args){
     status[0] = "Ocupado";
     status[1] = "Desocupado";
 
-    while (*params->open){
+    while (!finished){
         clearScreen();
 
         printf("Estados de Cocineros:\n");
@@ -147,7 +160,6 @@ void *showMenu(void *args){
         printf("\t4 - Cerrar Local\n");
         printf("\nIngrese una opcion: \n");
 
-        fflush(stdin);
         sleep(2);
     }
 
@@ -159,10 +171,16 @@ void clearScreen()
     system("@cls||clear");
 }
 
-void startGame(){
+void startGame(FoodPlace *mercadoChino, pthread_t sThread){
     /*Si el juego no esta iniciado, Ejecutar la calle*/
 
     printf("\nJuego Iniciado\n");
+    pthread_create(&sThread,NULL,streetThread,(void *)mercadoChino);
+
+    /* Setear alarma de fin */
+    signal(SIGALRM, closeDoor);
+    alarm(5);
+
 }
 
 void serveClient(){
@@ -185,11 +203,75 @@ void deliverOrder(){
 
 }
 
-void closeFoodPlace(int *open){
+void closeFoodPlace(){
     /*Cerrar todos los procesos pa irse a las casa a jugar wowcito y matar a mente colmena.*/
     printf("\nCerrando Local\n");
-    *open = 0;
+    open = 0;
+    finished = 1;
 }
+
+void *streetThread(void *arg){
+    
+    FoodPlace *mercadoChino = (FoodPlace *)arg;    
+    open = 1;
+    int tolerance = getMaxWaitTime(mercadoChino->menu);
+
+    int aux = 0;
+
+    while(open){
+        pthread_t *cThread = (pthread_t *) calloc(1,sizeof(pthread_t));
+
+        Client *client = (Client*)calloc(1,sizeof(Client));
+        client->id = aux++;
+        client->tolerance = tolerance;
+        client->order = pickFood(mercadoChino->menu);
+        client->mtxQueue = &mercadoChino->mtxQueue;
+
+        sleep(rand()%20+10);
+        pthread_create(cThread,NULL,clientThread,(void*)client);
+    }
+
+    printf("Cerrando hilo calle");
+
+    pthread_exit(NULL);
+}
+
+void closeDoor(int sigCode){
+    printf("Cerrando la puerta putos. se quedaron atroden");
+    open = 0;
+}
+
+void *clientThread(void *arg){
+    Client *client = (Client *)arg;
+
+    printf("Nuevo cliente en cola");
+    fflush(NULL);
+
+    free(client);
+    pthread_exit(NULL);
+}
+
+void *chefThread(void *arg){
+    // Chef *chef = (Chef *)arg;
+    Food comida;
+    inr error = 0;
+    error= SacarPedido(chef->m,&comida);
+    
+    //poner en ocupado
+    sleep(comida->prepTime);
+
+    error = IngresarComida(chef->m,*comida)
+      
+
+
+
+
+    // free(chef);
+    pthread_exit(NULL);
+}
+
+
+
 
 Food *menuSetup(){
     Food *menu = calloc(10, sizeof(Food));
@@ -232,10 +314,10 @@ Food *pickFood(Food *menu){
 }
 
 int getMaxWaitTime(Food *menu){
-    int min = menu[0].prepTime;
+    int max = menu[0].prepTime;
 
     for(int i = 0; i < 10; i++)
-        if(menu[i].prepTime < min)
-            min = menu[i].prepTime;
-    return min * 4;
+        if(menu[i].prepTime > max)
+            max = menu[i].prepTime;
+    return max * 4;
 }
