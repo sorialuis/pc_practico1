@@ -3,35 +3,16 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <signal.h>
+#include <semaphore.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include "monitorBufferCircular.h"
+
+#define COCINEROS 3
 
 /* Variable global para la alarma */
-int open, finished;
+int placeOpen, finished;
 
-typedef struct {
-    char name[50];
-    int prepTime;
-}Food;
-
-typedef struct {
-    pthread_mutex_t mtxCook;
-    pthread_mutex_t mtxCheckout;
-
-}Cashier;
-
-typedef struct {
-    int id;
-    int tolerance;
-    Food *order;
-    pthread_mutex_t *mtxQueue;
-}Client;
-
-typedef struct {
-    Food *menu;
-    Food *currentOrder;
-    Cashier cashier;
-    pthread_mutex_t mtxQueue;
-    pthread_mutex_t mtxServed;
-}FoodPlace;
 
 typedef struct {
     int *cooks; /*Cambiar por struct de cocineros*/
@@ -45,6 +26,7 @@ typedef struct {
 /* Thread functions */
 void *streetThread(void *);
 void *clientThread(void *);
+void *chefThread(void *);
 
 /* UserMenu Functions */
 void *showMenu(void *);
@@ -67,30 +49,39 @@ void closeDoor(int);
 
 int main() {
     pthread_t menu;
+    int error;
 
     int cooks;
     int queued_clients;
     int finished_orders;    
     int opt;
 
-    MenuParameters *params = (MenuParameters*)calloc(1,sizeof(MenuParameters));
-
-    params->mercadoChino = (FoodPlace *)calloc(1,sizeof(FoodPlace));
 
     srand(time(NULL));
 
     cooks = 3;
     queued_clients = 5;
-    open = 1;
+    placeOpen = 1;
     finished = 0;
     finished_orders = 3;
 
-    params->mercadoChino->menu = menuSetup();
 
-    params = calloc(1,sizeof(MenuParameters));
+    MenuParameters *params = (MenuParameters*)calloc(1,sizeof(MenuParameters));
+    params->mercadoChino = (FoodPlace *)calloc(1,sizeof(FoodPlace));
+    params->mercadoChino->menu = menuSetup();
     params->cooks = &cooks;
     params->queued_clients = &queued_clients;
     params->finished_orders = &finished_orders;
+    pthread_mutex_init(params->mercadoChino->mtx,NULL);
+    pthread_mutex_lock(params->mercadoChino->mtx);
+
+    params->mercadoChino->semQueue = sem_open("/semQueue", O_CREAT, O_RDWR, 3);
+
+    if(params->mercadoChino->semQueue == SEM_FAILED) {
+        perror("/semQueue");
+        error = -1;
+        return error;
+    }
 
     pthread_create(&menu,NULL,showMenu,(void *)params);
 
@@ -141,6 +132,8 @@ void *showMenu(void *args){
     while (!finished){
         clearScreen();
 
+        printf("Puerta: %s\n\n", placeOpen ? "ABIERTA" : "CERRADA");
+
         printf("Estados de Cocineros:\n");
         for(i = 1; i <= *params->cooks; i++ ){
             printf("\tCocinero %d: %s\n",i,status[rand()%2]);
@@ -179,7 +172,7 @@ void startGame(FoodPlace *mercadoChino, pthread_t sThread){
 
     /* Setear alarma de fin */
     signal(SIGALRM, closeDoor);
-    alarm(5);
+    alarm(10);
 
 }
 
@@ -206,28 +199,29 @@ void deliverOrder(){
 void closeFoodPlace(){
     /*Cerrar todos los procesos pa irse a las casa a jugar wowcito y matar a mente colmena.*/
     printf("\nCerrando Local\n");
-    open = 0;
+    placeOpen = 0;
     finished = 1;
 }
 
 void *streetThread(void *arg){
     
-    FoodPlace *mercadoChino = (FoodPlace *)arg;    
-    open = 1;
+    FoodPlace *mercadoChino = (FoodPlace *)arg;
+    placeOpen = 1;
     int tolerance = getMaxWaitTime(mercadoChino->menu);
 
     int aux = 0;
 
-    while(open){
+    while(placeOpen){
         pthread_t *cThread = (pthread_t *) calloc(1,sizeof(pthread_t));
 
         Client *client = (Client*)calloc(1,sizeof(Client));
         client->id = aux++;
         client->tolerance = tolerance;
         client->order = pickFood(mercadoChino->menu);
-        client->mtxQueue = &mercadoChino->mtxQueue;
+        client->mtx = mercadoChino->mtx;
+        client->semQueue = mercadoChino->semQueue;
 
-        sleep(rand()%20+10);
+        sleep(rand()%10+1);
         pthread_create(cThread,NULL,clientThread,(void*)client);
     }
 
@@ -237,8 +231,7 @@ void *streetThread(void *arg){
 }
 
 void closeDoor(int sigCode){
-    printf("Cerrando la puerta putos. se quedaron atroden");
-    open = 0;
+    placeOpen = 0;
 }
 
 void *clientThread(void *arg){
@@ -247,31 +240,42 @@ void *clientThread(void *arg){
     printf("Nuevo cliente en cola");
     fflush(NULL);
 
+    struct timespec wait;
+    clock_gettime(CLOCK_REALTIME, &wait);
+    wait.tv_sec += client->tolerance;
+
+    int errCode = sem_timedwait(client->semQueue, &wait);
+
+    if(!errCode){
+        //IngresarPedido(client->m->lista_pedidos, client->order);
+        pthread_mutex_lock(client->mtx);
+        //SacarComida(cliente->m->lista_terminados, *client->order);
+        //Pagar con memoria compartida sincronizado con split semaphore
+    } else{
+        printf("El Cliente %d se canso de esperar\r\n",client->id);
+    }
+
     free(client);
     pthread_exit(NULL);
 }
 
 void *chefThread(void *arg){
-    // Chef *chef = (Chef *)arg;
-    Food comida;
-    inr error = 0;
-    error= SacarPedido(chef->m,&comida);
-    
-    //poner en ocupado
-    sleep(comida->prepTime);
+    //int error;
+    Chef *chef = (Chef *)arg;
+    //Food comida;
 
-    error = IngresarComida(chef->m,*comida)
-      
-
-
-
-
+    while(!finished){
+        //semaforo
+        //error= SacarPedido(chef->m,&comida);
+        chef->libre = 0;
+        //sleep(comida.prepTime);
+        //error = IngresarComida(chef->m,*comida);
+        pthread_mutex_unlock(chef->mtx);
+        *chef->libre = 1;
+    }
     // free(chef);
     pthread_exit(NULL);
 }
-
-
-
 
 Food *menuSetup(){
     Food *menu = calloc(10, sizeof(Food));
